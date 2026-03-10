@@ -1,0 +1,5 @@
+{
+  "name": "A_stock_Analysis",
+  "description": "A stock data analysis application for Chinese A-shares, featuring historical price tracking and technical indicators like MACD and RSI.",
+  "requestFramePermissions": []
+}
