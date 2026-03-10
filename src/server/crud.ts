@@ -1,48 +1,88 @@
 import db from "./database.ts";
 import { Stock, StockPrice } from "./models.ts";
+import { config } from "./config.ts";
 
 export const crud = {
   // Stock operations
-  upsertStock(stock: Omit<Stock, "id">) {
-    const stmt = db.prepare(`
-      INSERT INTO stocks (symbol, name, sector, industry, exchange)
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(symbol) DO UPDATE SET
-        name = excluded.name,
-        sector = excluded.sector,
-        industry = excluded.industry,
-        exchange = excluded.exchange
-      RETURNING id
-    `);
-    const result = stmt.get(stock.symbol, stock.name, stock.sector || null, stock.industry || null, stock.exchange || null) as { id: number };
-    return result.id;
+  async upsertStock(stock: Omit<Stock, "id">) {
+    if (config.USE_MYSQL) {
+      const sql = `
+        INSERT INTO stocks (symbol, name, sector, industry, exchange)
+        VALUES (?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          name = VALUES(name),
+          sector = VALUES(sector),
+          industry = VALUES(industry),
+          exchange = VALUES(exchange)
+      `;
+      await db.run(sql, [stock.symbol, stock.name, stock.sector || null, stock.industry || null, stock.exchange || null]);
+      const row = await db.get<{ id: number }>("SELECT id FROM stocks WHERE symbol = ?", [stock.symbol]);
+      return row?.id;
+    } else {
+      const sql = `
+        INSERT INTO stocks (symbol, name, sector, industry, exchange)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(symbol) DO UPDATE SET
+          name = excluded.name,
+          sector = excluded.sector,
+          industry = excluded.industry,
+          exchange = excluded.exchange
+        RETURNING id
+      `;
+      const result = await db.get<{ id: number }>(sql, [stock.symbol, stock.name, stock.sector || null, stock.industry || null, stock.exchange || null]);
+      return result?.id;
+    }
   },
 
-  getStocks() {
-    return db.prepare("SELECT * FROM stocks").all() as Stock[];
+  async getStocks() {
+    return await db.all<Stock>("SELECT * FROM stocks");
   },
 
-  getStockBySymbol(symbol: string) {
-    return db.prepare("SELECT * FROM stocks WHERE symbol = ?").get(symbol) as Stock | undefined;
+  async getStockBySymbol(symbol: string) {
+    return await db.get<Stock>("SELECT * FROM stocks WHERE symbol = ?", [symbol]);
   },
 
   // Stock Price operations
-  upsertStockPrice(price: Omit<StockPrice, "id">) {
-    const stmt = db.prepare(`
-      INSERT INTO stock_prices (stock_id, date, open, high, low, close, volume, amount)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(stock_id, date) DO UPDATE SET
-        open = excluded.open,
-        high = excluded.high,
-        low = excluded.low,
-        close = excluded.close,
-        volume = excluded.volume,
-        amount = excluded.amount
-    `);
-    stmt.run(price.stock_id, price.date, price.open, price.high, price.low, price.close, price.volume, price.amount || null);
+  async upsertStockPrice(price: Omit<StockPrice, "id">) {
+    if (config.USE_MYSQL) {
+      const sql = `
+        INSERT INTO stock_prices (stock_id, date, open, high, low, close, volume, amount)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          open = VALUES(open),
+          high = VALUES(high),
+          low = VALUES(low),
+          close = VALUES(close),
+          volume = VALUES(volume),
+          amount = VALUES(amount)
+      `;
+      await db.run(sql, [price.stock_id, price.date, price.open, price.high, price.low, price.close, price.volume, price.amount || null]);
+    } else {
+      const sql = `
+        INSERT INTO stock_prices (stock_id, date, open, high, low, close, volume, amount)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(stock_id, date) DO UPDATE SET
+          open = excluded.open,
+          high = excluded.high,
+          low = excluded.low,
+          close = excluded.close,
+          volume = excluded.volume,
+          amount = excluded.amount
+      `;
+      await db.run(sql, [price.stock_id, price.date, price.open, price.high, price.low, price.close, price.volume, price.amount || null]);
+    }
   },
 
-  getStockPrices(stockId: number, limit: number = 100) {
-    return db.prepare("SELECT * FROM stock_prices WHERE stock_id = ? ORDER BY date DESC LIMIT ?").all(stockId, limit) as StockPrice[];
+  async getStockPrices(stockId: number, limit: number = 100) {
+    return await db.all<StockPrice>("SELECT * FROM stock_prices WHERE stock_id = ? ORDER BY date DESC LIMIT ?", [stockId, limit]);
   },
+
+  // Cleanup logic: Keep only the last 2 years of data
+  async cleanupOldData() {
+    const twoYearsAgo = new Date();
+    twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+    const dateString = twoYearsAgo.toISOString().split('T')[0];
+    
+    await db.run("DELETE FROM stock_prices WHERE date < ?", [dateString]);
+  }
 };

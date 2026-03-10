@@ -4,6 +4,9 @@ import path from "path";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import stockRouter from "./src/server/routers/stocks.ts";
+import { config } from "./src/server/config.ts";
+import { initDb } from "./src/server/models.ts";
+import { crud } from "./src/server/crud.ts";
 
 dotenv.config();
 
@@ -11,8 +14,26 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function startServer() {
+  // Initialize Database
+  try {
+    await initDb();
+    console.log("Database initialized successfully");
+    
+    // Initial cleanup and schedule daily cleanup
+    await crud.cleanupOldData();
+    setInterval(async () => {
+      try {
+        await crud.cleanupOldData();
+      } catch (err) {
+        console.error("Cleanup error:", err);
+      }
+    }, 24 * 60 * 60 * 1000); // Every 24 hours
+  } catch (error) {
+    console.error("Failed to initialize database:", error);
+  }
+
   const app = express();
-  const PORT = 3000;
+  const PORT = config.PORT;
 
   app.use(express.json());
 
